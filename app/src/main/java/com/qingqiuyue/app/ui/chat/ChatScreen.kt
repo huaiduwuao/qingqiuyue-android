@@ -17,13 +17,16 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qingqiuyue.app.data.api.APIService
+import com.qingqiuyue.app.data.store.TokenStore
 import com.qingqiuyue.app.ui.components.AIGCBadgeInline
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import javax.inject.Inject
 
 data class ChatMessage(
@@ -36,7 +39,10 @@ data class ChatMessage(
 }
 
 @HiltViewModel
-class ChatViewModel @Inject constructor(private val api: APIService) : ViewModel() {
+class ChatViewModel @Inject constructor(
+    private val api: APIService,
+    private val chatClient: ChatAPIClient
+) : ViewModel() {
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
@@ -59,8 +65,21 @@ class ChatViewModel @Inject constructor(private val api: APIService) : ViewModel
                     _state.update { it.copy(streaming = false) }
                     return@launch
                 }
-                // SSE 流式(简化:展示 TODO 提示;生产应换 ChatAPIClient.stream())
-                updateAssistant(assistantId, "(SSE 流式接入见 ChatAPIClient.kt)")
+                // SSE 流式：使用 ChatAPIClient 进行实时对话
+                chatClient.stream(sessionId = "default_session", message = text)
+                    .catch { e ->
+                        updateAssistant(assistantId, "连接失败:${e.message}")
+                    }
+                    .collect { chunk ->
+                        // 解析 SSE data 字段
+                        if (chunk.startsWith("{")) {
+                            val json = JSONObject(chunk)
+                            val content = json.optString("content", "")
+                            if (content.isNotEmpty()) {
+                                updateAssistant(assistantId, content)
+                            }
+                        }
+                    }
             } catch (e: Exception) {
                 updateAssistant(assistantId, "出错了:${e.message}")
             } finally {

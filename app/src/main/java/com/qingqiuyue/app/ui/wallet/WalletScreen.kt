@@ -52,14 +52,14 @@ class WalletViewModel @Inject constructor(private val api: APIService) : ViewMod
         }
     }
 
-    fun purchase(pkg: DiamondPackage) {
+    fun purchase(pkg: DiamondPackage, onError: (String) -> Unit = {}) {
         viewModelScope.launch {
             try {
                 val order = api.createOrder(CreateOrderRequest(pkg.id))
                 order.data?.let { api.mockPay(MockPayRequest(it.orderId)) }
                 load()  // 刷新余额
             } catch (e: Exception) {
-                _state.update { it.copy(error = e.message) }
+                onError(e.message ?: "购买失败")
             }
         }
     }
@@ -93,7 +93,7 @@ fun WalletScreen(vm: WalletViewModel = hiltViewModel()) {
             } else {
                 LazyVerticalGrid(columns = GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(state.packages, key = { it.id }) { pkg ->
-                        PackageCard(pkg, onBuy = { vm.purchase(pkg) })
+                        PackageCard(pkg, onBuy = { onError -> vm.purchase(pkg, onError) })
                     }
                 }
             }
@@ -129,8 +129,9 @@ private fun BalanceCard(balance: WalletBalance?) {
 }
 
 @Composable
-private fun PackageCard(pkg: DiamondPackage, onBuy: () -> Unit) {
+private fun PackageCard(pkg: DiamondPackage, onBuy: (onError: (String) -> Unit) -> Unit) {
     var buying by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -147,11 +148,22 @@ private fun PackageCard(pkg: DiamondPackage, onBuy: () -> Unit) {
                 Text("送 $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
             }
             Text("¥%.2f".format(pkg.priceCents / 100.0), style = MaterialTheme.typography.bodyMedium)
+
+            // 显示错误信息
+            errorMsg?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
+                    if (buying) return@Button  // 防止重复点击
                     buying = true
-                    onBuy()
+                    errorMsg = null
+                    onBuy { error ->
+                        buying = false
+                        errorMsg = error
+                    }
                 },
                 enabled = !buying,
                 modifier = Modifier.fillMaxWidth().height(40.dp),
